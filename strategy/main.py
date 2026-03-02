@@ -1,10 +1,11 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from data import load_ibov, load_prices
+from data import load_ibov, load_prices, load_volume
 from signals import hmm_vol_signal, HmmRegime
-from portfolio import momentum_strategy, mean_reversion_strategy, cash_strategy, regime_dispatch_strategy
+from portfolio import momentum_strategy, mean_reversion_strategy, cash_strategy, regime_dispatch_strategy, liquidity_filter
 from pipeline import run_pipeline
+from observability import export_csv, inspect_date
 
 
 def print_metrics(metrics: dict) -> None:
@@ -27,6 +28,7 @@ def main() -> None:
     print("Carregando dados...")
     prices = load_prices()
     ibov = load_ibov()
+    volume = load_volume()
 
     TRAIN_END  = '2017-12-31'
     TEST_START = '2018-01-01'
@@ -37,7 +39,7 @@ def main() -> None:
         HmmRegime.MID_VOL:  mean_reversion_strategy(n=10, lookback=60),
         HmmRegime.HIGH_VOL: cash_strategy(),
     })
-    risk_filters = []
+    risk_filters = [liquidity_filter(volume, window=20, min_adv=500_000)]
 
     prices = prices.loc[TEST_START:]
 
@@ -45,6 +47,25 @@ def main() -> None:
     result = run_pipeline(prices, ibov, regime_signal, strategy, risk_filters)
 
     print_metrics(result["metrics"])
+
+    # Exportar CSVs de observabilidade
+    export_csv(result)
+
+    # Resumo de atribuição: top/bottom 5 contribuidores no período
+    total_contrib = result["contributions"].sum()
+    top5 = total_contrib.nlargest(5)
+    bottom5 = total_contrib.nsmallest(5)
+
+    print("Maiores contribuidores (período completo):")
+    for ticker, val in top5.items():
+        print(f"  {ticker:<14} {val:>+10.4%}")
+    print("\nMenores contribuidores (período completo):")
+    for ticker, val in bottom5.items():
+        print(f"  {ticker:<14} {val:>+10.4%}")
+
+    # Inspeção de datas específicas
+    for d in ['2019-09-17', '2019-09-18', '2019-09-19', '2019-09-20']:
+        inspect_date(result, d)
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 

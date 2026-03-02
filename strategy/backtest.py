@@ -30,8 +30,9 @@ def run(weights: pd.DataFrame, prices: pd.DataFrame, ibov: pd.Series) -> dict:
     """
     rets = prices.pct_change()
 
-    # Retorno diário da estratégia
-    port_ret = (weights * rets).sum(axis=1)
+    # Contribuição de cada ativo e retorno diário da estratégia
+    contributions = weights * rets
+    port_ret = contributions.sum(axis=1)
 
     # Alinhar com período comum
     common = port_ret.index.intersection(ibov.index)
@@ -63,4 +64,6 @@ def run(weights: pd.DataFrame, prices: pd.DataFrame, ibov: pd.Series) -> dict:
         "ibov_equity": ibov_equity,
         "port_ret": port_ret,
         "metrics": m,
+        "weights": weights,
+        "contributions": contributions,
     }
