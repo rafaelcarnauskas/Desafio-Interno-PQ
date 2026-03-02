@@ -63,9 +63,7 @@ def main() -> None:
     for ticker, val in bottom5.items():
         print(f"  {ticker:<14} {val:>+10.4%}")
 
-    # Inspeção de datas específicas
-    for d in ['2019-09-17', '2019-09-18', '2019-09-19', '2019-09-20']:
-        inspect_date(result, d)
+    # inspect_date(result, '2019-09-17')
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
