@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from data import load_ibov, load_prices
-from signals import rolling_vol_signal
+from signals import rolling_vol_signal, hmm_vol_signal
 from portfolio import momentum_strategy
 from pipeline import run_pipeline
 
@@ -28,16 +28,19 @@ def main() -> None:
     prices = load_prices()
     ibov = load_ibov()
 
-    regime_signal = rolling_vol_signal(window=21, threshold=0.20)
+    TRAIN_END  = '2017-12-31'
+    TEST_START = '2018-01-01'
+    regime_signal = hmm_vol_signal(n_states=3, train_end=TRAIN_END)
     strategy = momentum_strategy(n=10, lookback=60)
     risk_filters = []
+
+    prices = prices.loc[TEST_START:]
 
     print("Executando pipeline...")
     result = run_pipeline(prices, ibov, regime_signal, strategy, risk_filters)
 
     print_metrics(result["metrics"])
 
-    # Curvas de equity
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
     eq = result["equity"]
@@ -46,11 +49,10 @@ def main() -> None:
     ax1.plot(eq.index, eq.values, label="Estratégia Momentum + Regime", color="steelblue")
     ax1.plot(ibov_eq.index, ibov_eq.values, label="IBOV Buy & Hold", color="orange", alpha=0.8)
     ax1.set_ylabel("Equity (base 1)")
-    ax1.set_title("Curvas de Equity — Estratégia vs IBOV (2010–2024)")
+    ax1.set_title("Curvas de Equity — Estratégia vs IBOV (2018–2024, fora da amostra)")
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    # Regime overlay
     regime_aligned = result["regime"].reindex(eq.index)
     ax2.fill_between(
         regime_aligned.index,
