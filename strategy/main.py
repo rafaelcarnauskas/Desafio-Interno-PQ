@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from data import load_ibov, load_prices
-from signals import hmm_vol_signal
+from signals import hmm_vol_signal, HmmRegime
 from portfolio import momentum_strategy, mean_reversion_strategy, cash_strategy, regime_dispatch_strategy
 from pipeline import run_pipeline
 
@@ -33,9 +33,9 @@ def main() -> None:
     regime_signal = hmm_vol_signal(n_states=3, train_end=TRAIN_END)
 
     strategy = regime_dispatch_strategy({
-        0: momentum_strategy(n=10, lookback=60),        # low vol  -> momentum
-        1: mean_reversion_strategy(n=10, lookback=60),  # mid vol  -> mean reversion
-        2: cash_strategy(),                              # high vol -> cash
+        HmmRegime.LOW_VOL:  momentum_strategy(n=10, lookback=60),
+        HmmRegime.MID_VOL:  mean_reversion_strategy(n=10, lookback=60),
+        HmmRegime.HIGH_VOL: cash_strategy(),
     })
     risk_filters = []
 
@@ -60,8 +60,8 @@ def main() -> None:
 
     # Plot 3 estados de regime com cores distintas
     regime_aligned = result["regime"].reindex(eq.index)
-    regime_colors = {0: "green", 1: "gold", 2: "red"}
-    regime_labels = {0: "Low vol (momentum)", 1: "Mid vol (mean reversion)", 2: "High vol (cash)"}
+    regime_colors = {HmmRegime.LOW_VOL: "green", HmmRegime.MID_VOL: "gold", HmmRegime.HIGH_VOL: "red"}
+    regime_labels = {HmmRegime.LOW_VOL: "Low vol (momentum)", HmmRegime.MID_VOL: "Mid vol (mean reversion)", HmmRegime.HIGH_VOL: "High vol (cash)"}
 
     for state, color in regime_colors.items():
         mask = (regime_aligned == state).astype(float)
