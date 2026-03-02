@@ -92,7 +92,7 @@ def _fit_hmm(X, n_states, random_state):
 
 
 def hmm_vol_signal(n_states: int = 3, train_end: str = '2017-12-31', random_state: int = 42) -> RegimeSignal:
-    """Sinal de regime baseado em HMM treinado em janela histórica; decodificação causal (forward only)."""
+    """Sinal de regime 3 estados (0=low, 1=mid, 2=high vol) via HMM; decodificação causal."""
     def signal(ibov: pd.Series) -> pd.Series:
         log_ret = np.log(ibov / ibov.shift(1)).dropna()
 
@@ -103,8 +103,12 @@ def hmm_vol_signal(n_states: int = 3, train_end: str = '2017-12-31', random_stat
         alpha_hat, _ = _scaled_forward(X_full, pi, A, mu, sigma)
         states = np.argmax(alpha_hat, axis=1)
 
-        high_vol = int(np.argmax(sigma))
-        regime = (states == high_vol).astype(int)
+        # Remapear estados para ordem crescente de sigma: 0=low, 1=mid, 2=high vol
+        order = np.argsort(sigma)
+        state_map = np.zeros(n_states, dtype=int)
+        for new_label, old_label in enumerate(order):
+            state_map[old_label] = new_label
+        regime = state_map[states]
 
         return (
             pd.Series(regime, index=log_ret.index, name='regime')

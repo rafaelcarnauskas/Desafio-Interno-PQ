@@ -2,8 +2,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from data import load_ibov, load_prices
-from signals import rolling_vol_signal, hmm_vol_signal
-from portfolio import momentum_strategy
+from signals import hmm_vol_signal
+from portfolio import momentum_strategy, mean_reversion_strategy, cash_strategy, regime_dispatch_strategy
 from pipeline import run_pipeline
 
 
@@ -31,7 +31,12 @@ def main() -> None:
     TRAIN_END  = '2017-12-31'
     TEST_START = '2018-01-01'
     regime_signal = hmm_vol_signal(n_states=3, train_end=TRAIN_END)
-    strategy = momentum_strategy(n=10, lookback=60)
+
+    strategy = regime_dispatch_strategy({
+        0: momentum_strategy(n=10, lookback=60),        # low vol  -> momentum
+        1: mean_reversion_strategy(n=10, lookback=60),  # mid vol  -> mean reversion
+        2: cash_strategy(),                              # high vol -> cash
+    })
     risk_filters = []
 
     prices = prices.loc[TEST_START:]
@@ -46,25 +51,32 @@ def main() -> None:
     eq = result["equity"]
     ibov_eq = result["ibov_equity"]
 
-    ax1.plot(eq.index, eq.values, label="Estratégia Momentum + Regime", color="steelblue")
+    ax1.plot(eq.index, eq.values, label="Estratégia Momentum/MeanRev + Regime", color="steelblue")
     ax1.plot(ibov_eq.index, ibov_eq.values, label="IBOV Buy & Hold", color="orange", alpha=0.8)
     ax1.set_ylabel("Equity (base 1)")
     ax1.set_title("Curvas de Equity — Estratégia vs IBOV (2018–2024, fora da amostra)")
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
+    # Plot 3 estados de regime com cores distintas
     regime_aligned = result["regime"].reindex(eq.index)
-    ax2.fill_between(
-        regime_aligned.index,
-        regime_aligned.values,
-        alpha=0.4,
-        color="red",
-        label="Regime alta vol (cash)",
-    )
-    ax2.set_ylabel("Regime (1=alta vol)")
+    regime_colors = {0: "green", 1: "gold", 2: "red"}
+    regime_labels = {0: "Low vol (momentum)", 1: "Mid vol (mean reversion)", 2: "High vol (cash)"}
+
+    for state, color in regime_colors.items():
+        mask = (regime_aligned == state).astype(float)
+        ax2.fill_between(
+            regime_aligned.index,
+            mask,
+            alpha=0.4,
+            color=color,
+            label=regime_labels[state],
+        )
+
+    ax2.set_ylabel("Regime")
     ax2.set_xlabel("Data")
-    ax2.set_title("Regime de Volatilidade")
-    ax2.legend()
+    ax2.set_title("Regime de Volatilidade (3 estados HMM)")
+    ax2.legend(loc="upper right")
     ax2.grid(True, alpha=0.3)
 
     plt.tight_layout()
