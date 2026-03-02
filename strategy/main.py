@@ -2,9 +2,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from data import load_ibov, load_prices
-from signals import get_regime
-from portfolio import get_weights
-from backtest import run
+from signals import rolling_vol_signal
+from portfolio import momentum_strategy
+from pipeline import run_pipeline
 
 
 def print_metrics(metrics: dict) -> None:
@@ -28,14 +28,12 @@ def main() -> None:
     prices = load_prices()
     ibov = load_ibov()
 
-    print("Calculando regime...")
-    regime = get_regime(ibov)
+    regime_signal = rolling_vol_signal(window=21, threshold=0.20)
+    strategy = momentum_strategy(n=10, lookback=60)
+    risk_filters = []
 
-    print("Calculando pesos...")
-    weights = get_weights(prices, regime)
-
-    print("Executando backtest...")
-    result = run(weights, prices, ibov)
+    print("Executando pipeline...")
+    result = run_pipeline(prices, ibov, regime_signal, strategy, risk_filters)
 
     print_metrics(result["metrics"])
 
@@ -53,7 +51,7 @@ def main() -> None:
     ax1.grid(True, alpha=0.3)
 
     # Regime overlay
-    regime_aligned = regime.reindex(eq.index)
+    regime_aligned = result["regime"].reindex(eq.index)
     ax2.fill_between(
         regime_aligned.index,
         regime_aligned.values,
