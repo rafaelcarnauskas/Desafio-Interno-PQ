@@ -5,27 +5,13 @@ import pandas as pd
 from scipy.stats import norm
 
 from interfaces import RegimeSignal
+from signals.common import log_returns
 
 
 class HmmRegime(IntEnum):
     LOW_VOL = 0
     MID_VOL = 1
     HIGH_VOL = 2
-
-
-def rolling_vol_signal(window: int = 21, threshold: float = 0.20) -> RegimeSignal:
-    """Sinal de regime baseado em volatilidade realizada do IBOV (0=normal, 1=alta vol)."""
-    def signal(ibov: pd.Series) -> pd.Series:
-        log_ret = np.log(ibov / ibov.shift(1))
-        vol = log_ret.rolling(window).std() * np.sqrt(252)
-        regime = pd.Series(
-            np.where(vol > threshold, HmmRegime.HIGH_VOL, HmmRegime.LOW_VOL),
-            index=ibov.index,
-            name="regime",
-        )
-        return regime
-
-    return signal
 
 
 def _scaled_forward(X, pi, A, mu, sigma):
@@ -105,7 +91,7 @@ def _fit_hmm(X, n_states, random_state):
 def hmm_vol_signal(n_states: int = 3, train_end: str = '2017-12-31', random_state: int = 42) -> RegimeSignal:
     """Sinal de regime 3 estados (0=low, 1=mid, 2=high vol) via HMM; decodificação causal."""
     def signal(ibov: pd.Series) -> pd.Series:
-        log_ret = np.log(ibov / ibov.shift(1)).dropna()
+        log_ret = log_returns(ibov).dropna()
 
         X_train = log_ret.loc[:train_end].values
         pi, A, mu, sigma = _fit_hmm(X_train, n_states, random_state)
