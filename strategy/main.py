@@ -4,6 +4,7 @@ import pandas as pd
 from data import load_ibov, load_prices, load_volume
 from signals import hmm_vol_signal, HmmRegime
 from portfolio import momentum_strategy, mean_reversion_strategy, cash_strategy, regime_dispatch_strategy, liquidity_filter
+from risk.VoV import vov_filter
 from pipeline import run_pipeline
 from observability import export_csv, inspect_date
 
@@ -39,8 +40,10 @@ def main() -> None:
         HmmRegime.MID_VOL:  mean_reversion_strategy(n=10, lookback=60),
         HmmRegime.HIGH_VOL: cash_strategy(),
     })
-    risk_filters = [liquidity_filter(volume, window=20, min_adv=500_000)]
-
+    risk_filters = [
+    liquidity_filter(volume, window=20, min_adv=500_000),
+    vov_filter(train_end=TRAIN_END),
+    ]
     prices = prices.loc[TEST_START:]
 
     print("Executando pipeline...")
