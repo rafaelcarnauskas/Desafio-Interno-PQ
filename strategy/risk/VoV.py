@@ -51,10 +51,6 @@ def vov_filter(
     """
     if vol_window < 2:
         raise ValueError("vol_window deve ser >= 2")
-    if vov_window < 2:
-        raise ValueError("vov_window deve ser >= 2")
-    if not (0.0 < threshold_quantile < 1.0):
-        raise ValueError("threshold_quantile deve estar entre 0 e 1")
     if not (0.0 <= reduction <= 1.0):
         raise ValueError("reduction deve estar entre 0 e 1")
 
