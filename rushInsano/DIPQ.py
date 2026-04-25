@@ -15,7 +15,7 @@ from scipy.special import comb
 
 STOP_LOSS_PCT            = 0.07   # drawdown máximo desde o pico (7 %)
 TRAILING_STOP_PCT        = 0.05   # recuo do equity desde o último pico (5 %)
-THRESHOLD_net_analysis = 0.7      #usar threshold fixo e nao percentil torna a medida de densidade util
+THRESHOLD_net_analysis = 0.7
 
 class QuantStrategyPipeline:
     def __init__(self, start_date, end_date, split_date='2019-01-01'):
@@ -61,12 +61,9 @@ class QuantStrategyPipeline:
         self.ibov['vol_of_vol'] = self.ibov['volatility'].rolling(window=window).std()
         
         # --- FEATURES DOS ATIVOS (B3) ---
-        mom1 = self.b3 / self.b3.shift(21) - 1
-        mom2 = self.b3 / self.b3.shift(63) - 1
-        mom3 = self.b3 / self.b3.shift(126) - 1
-
-        self.momentum = 0.2*mom1 + 0.4*mom2 + 0.4*mom3
-        self.momentum = self.momentum.shift(1)
+        # Calculando as médias e RSI para todas as ações da B3 de uma vez usando operações vetoriais
+        self.b3_sma_fast = self.b3.rolling(window=10).mean()
+        self.b3_sma_slow = self.b3.rolling(window=50).mean()
         
         # RSI Vetorial para o DataFrame inteiro
         delta = self.b3.diff()
@@ -211,6 +208,7 @@ class QuantStrategyPipeline:
         # Cria um DataFrame temporário alinhado para jogar de volta no df principal
         valid_data = pd.concat([train_data, test_data]).copy()
         valid_data['hmm_state_raw'] = all_states
+        max_entropy = np.log2(3)
         valid_data['hmm_entropy'] = [scipy_entropy(p, base=2) for p in all_probs]
         
         # 5. Mapear os estados (0=Baixa, 1=Média, 2=Alta vol)
@@ -233,10 +231,6 @@ class QuantStrategyPipeline:
 
     def run_backtest(self, initial_capital=100000, stop_loss_pct=0.07, trailing_stop_pct=0.05):
         print("Rodando Backtest Multi-Ativos...")
-
-        last_rebalance_month = None
-
-        split_date_pd = pd.to_datetime(self.split_date)
         
         capital = initial_capital
         
@@ -246,13 +240,12 @@ class QuantStrategyPipeline:
         
         equity_curve = []
         equity_dates = []
+
+        # Calcula o percentil 80% baseado em uma janela de 1 ano (252 dias úteis)
+        self.ibov['density_rolling_80'] = self.ibov['density'].rolling(window=252).quantile(0.8)
         
         # Itera dia a dia
         for date, ibov_row in self.ibov.iterrows():
-
-            if date < split_date_pd: #evita que rode no treino
-                continue
-
             # Pula os dias que não temos os indicadores mapeados
             if pd.isna(ibov_row['hmm_state']) or date not in self.b3.index:
                 continue
@@ -261,13 +254,16 @@ class QuantStrategyPipeline:
             
             # --- 1. MODULADOR DE EXPOSIÇÃO DO MERCADO ---
             exposure_modifier = 1.0
-            if ibov_row['hmm_entropy'] > 1.2: exposure_modifier *= 0.5
+            if ibov_row['hmm_entropy'] > 0.6: exposure_modifier *= 0.5
             
             # Checa se vol_of_vol e density existem antes de checar quantil (evita erros nos primeiros dias)
             # CORREÇÃO (comentário atualizado): 'density' e 'max_eigen_value' agora estão
             # disponíveis em ibov_row após o join feito no __main__.
-            if pd.notna(ibov_row.get('density')) and ibov_row['density'] > self.ibov['density'].quantile(0.8):
-                exposure_modifier *= 0.5
+
+            density_threshold = ibov_row.get('density_rolling_80')
+            if pd.notna(ibov_row.get('density')) and pd.notna(density_threshold):
+                if ibov_row['density'] > density_threshold:
+                    exposure_modifier *= 0.5
                 
             # Estado do mercado de hoje
             regime = ibov_row['hmm_state']
@@ -299,33 +295,8 @@ class QuantStrategyPipeline:
                 if pos['qty'] == 0:
                     # Estado 0: Baixa Vol (Tendência)
                     if regime == 0:
-
-                        if date.month != last_rebalance_month: #garante que so haja rebalanceamento a cada mes
-                            last_rebalance_month = date.month
-                            # ranking do momentum no dia
-                            scores = self.momentum.loc[date].dropna()
-
-                            # preços do dia dos ativos rankeados
-                            prices_today = current_b3_prices[scores.index]
-
-                            # FILTROS IMPORTANTES
-                            valid = (
-                                (prices_today > 10) &        # evita penny stock
-                                (prices_today < 500) &       # evita preço absurdo / erro
-                                (scores != 0)
-                            )
-
-                            scores = scores[valid]
-
-                            # top 5 apenas
-                            buy_signals = list(scores.nlargest(5).index)
-
-                            current_positions = [t for t,p in positions.items() if p['qty'] > 0]
-
-                        for ticker in current_positions:
-                            if ticker not in buy_signals:
-                                capital += positions[ticker]['qty'] * current_b3_prices[ticker]
-                                positions[ticker] = {'qty':0,'entry_price':0,'highest_price':0}
+                        if self.b3_sma_fast.loc[date, ticker] > self.b3_sma_slow.loc[date, ticker]:
+                            buy_signals.append(ticker)
                             
                     # Estado 1: Média Vol (Reversão)
                     elif regime == 1:
@@ -347,7 +318,7 @@ class QuantStrategyPipeline:
                 for ticker in buy_signals:
                     if capital >= per_trade_capital:
                         price = current_b3_prices[ticker]
-                        qty = min(per_trade_capital / price, 1000) #limita quantidade por compra
+                        qty = per_trade_capital / price
                         
                         positions[ticker]['qty'] = qty
                         positions[ticker]['entry_price'] = price

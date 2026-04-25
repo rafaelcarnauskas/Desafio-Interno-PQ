@@ -1,5 +1,5 @@
 """
-analise.py — Dashboard de Análise do rushInsano
+analise.py — Dashboard de Análise do CERBERUS
 ═══════════════════════════════════════════════════════════════════════
 Roda APÓS o checkpoint.py. Importa o pipeline, executa e gera:
 
@@ -21,7 +21,7 @@ Roda APÓS o checkpoint.py. Importa o pipeline, executa e gera:
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
-from checkpoint import QuantStrategyPipeline, STOP_LOSS_PCT, TRAILING_STOP_PCT
+from DIPQ import QuantStrategyPipeline, STOP_LOSS_PCT, TRAILING_STOP_PCT
 
 import numpy as np
 import pandas as pd
@@ -62,14 +62,18 @@ COR_STRAT    = "#1A6FAF"   # azul escuro
 COR_BENCH    = "#95A5A6"   # cinza
 
 CRISES = {
-    "Dilma\nImpeach.": "2016-04-17",
-    "Joesley\nDay":    "2017-05-18",
-    "COVID-19":        "2020-03-23",
+    "Dilma\nImpeach.":      "2016-04-17",
+    "Joesley\nDay":         "2017-05-18",
+    "Greve dos\nCaminh.":   "2018-05-21",
+    "Brumadinho":           "2019-01-25",
+    "COVID-19":             "2020-03-23",
+    "Circuit\nBreaker":     "2020-03-18",
+    "Invasão\nUcrânia":     "2022-02-24",
 }
 
 # ── Executar pipeline ─────────────────────────────────────────────────────────
 print("=" * 60)
-print("  rushInsano — Dashboard de Análise")
+print("  CERBERUS — Dashboard de Análise")
 print("=" * 60)
 print("\nInicializando pipeline...")
 
@@ -164,9 +168,12 @@ plt.savefig("fig1_regimes_ibov.png", dpi=180, bbox_inches='tight')
 plt.show()
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  FIG 2 — Entropia ao longo do tempo                                       ║
+# ║  FIG 2 — Entropia ao longo do tempo                                      ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 print("Gerando Figure 2 — Entropia...")
+
+# Define o novo limiar baseado na entropia normalizada (0 a 1)
+THRESHOLD_ENTROPY = 0.6 
 
 fig, ax = plt.subplots(figsize=(16, 5))
 fig.patch.set_facecolor("#F8F9FA")
@@ -176,33 +183,32 @@ ent = ibov['hmm_entropy'].dropna()
 ax.fill_between(ent.index, ent.values, alpha=0.25, color="#2980B9")
 ax.plot(ent.index, ent.values, color="#2980B9", linewidth=1.0)
 
-# Threshold de operação
-ax.axhline(1.2, color="#E74C3C", linestyle="--", linewidth=1.5,
-           label="Threshold: H > 1.2 → exposição ÷ 2")
+# Threshold de operação (Atualizado para a nova escala)
+ax.axhline(THRESHOLD_ENTROPY, color="#E74C3C", linestyle="--", linewidth=1.5,
+           label=f"Threshold (H > {THRESHOLD_ENTROPY} → exposição ÷ 2)")
 
-# Entropia máxima teórica
-ax.axhline(np.log2(3), color="#95A5A6", linestyle=":", linewidth=1.0,
-           label=f"Entropia máxima log₂(3) ≈ {np.log2(3):.2f}")
+# Entropia máxima teórica (Agora é 1.0 por conta da normalização prévia)
+ax.axhline(1.0, color="#95A5A6", linestyle=":", linewidth=1.0,
+           label="Entropia máxima normalizada = 1.0")
 
-# Crises
+# Crises (Altura do texto ajustada de 1.52 para 0.95)
 for nome, data in CRISES.items():
     d = pd.to_datetime(data)
     ax.axvline(d, color="#7F8C8D", linestyle=":", linewidth=1.0, alpha=0.7)
-    ax.text(d, 1.52, nome, fontsize=7.5, color="#555555",
+    ax.text(d, 0.95, nome, fontsize=7.5, color="#555555",
             ha='center', va='top',
             bbox=dict(fc='white', ec='none', alpha=0.7, pad=1.5))
 
-# Área de alta incerteza
-ax.fill_between(ent.index, 1.2, ent.values,
-                where=(ent.values > 1.2),
-                alpha=0.35, color="#E74C3C", label="Zona de alta incerteza")
-
+# Linha de divisão (In-sample / Out-of-sample)
 ax.axvline(split, color="#C0392B", linestyle="--", linewidth=1.5, alpha=0.6)
-ax.set_ylim(0, np.log2(3) + 0.1)
-ax.set_title("Entropia de Shannon do HMM ao Longo do Tempo")
+
+# Limites e Rótulos ajustados para a nova escala de 0 a 1
+ax.set_ylim(0, 1.05)
+ax.set_title("Entropia de Shannon do HMM ao Longo do Tempo (Normalizada)")
 ax.set_xlabel("Data")
-ax.set_ylabel("Entropia H (base 2)")
+ax.set_ylabel("Entropia H (0 a 1)")
 ax.legend(loc="upper right", framealpha=0.92)
+
 plt.tight_layout()
 plt.savefig("fig2_entropia.png", dpi=180, bbox_inches='tight')
 plt.show()
@@ -315,6 +321,16 @@ eig_s = ibov['max_eigen_value'].dropna()
 fig, ax = plt.subplots(figsize=(16, 5))
 fig.patch.set_facecolor("#F8F9FA")
 
+# --- ADIÇÃO: Fundo colorido por regime (igual à Fig 1) ---
+dates = ibov.index
+for i in range(len(dates) - 1):
+    estado = ibov['hmm_state'].iloc[i]
+    if pd.notna(estado):
+        ax.axvspan(dates[i], dates[i+1],
+                   color=cor_regime[int(estado)], alpha=0.18, linewidth=0)
+# ---------------------------------------------------------
+
+# Plota a linha e o preenchimento do autovalor máximo por cima do fundo
 ax.fill_between(eig_s.index, eig_s.values, alpha=0.18, color="#16A085")
 ax.plot(eig_s.index, eig_s.values, color="#16A085", linewidth=1.0)
 
@@ -340,10 +356,19 @@ for nome, data in CRISES.items():
 
 ax.axvline(split, color="#C0392B", linestyle="--", linewidth=1.5, alpha=0.6,
            label="Início do Teste (2019)")
+
 ax.set_title("Maior Autovalor da Rede (λ_max) — Fragilidade Sistêmica do Mercado")
 ax.set_xlabel("Data")
 ax.set_ylabel("λ_max (autovalor máximo da matriz de adjacência)")
-ax.legend(loc="upper left", framealpha=0.92)
+
+# --- ADIÇÃO: Adicionar legendas dos regimes HMM ---
+patches = [mpatches.Patch(color=cor_regime[k], alpha=0.5, label=v)
+           for k, v in label_map.items()]
+handles, labels = ax.get_legend_handles_labels()
+# Usa ncol=3 para a legenda não ficar alta demais e cobrir o gráfico
+ax.legend(handles=handles + patches, loc="upper left", framealpha=0.92, ncol=3) 
+# ---------------------------------------------------
+
 plt.tight_layout()
 plt.savefig("fig5_eigen.png", dpi=180, bbox_inches='tight')
 plt.show()
@@ -405,7 +430,7 @@ ax_dd  = fig.add_subplot(gs[1], sharex=ax_eq)
 # Equity
 ax_eq.plot(perf_df.index, perf_df['cum_strategy'],
            color=COR_STRAT, linewidth=2.0,
-           label="rushInsano (HMM Multi-Ativos)")
+           label="CERBERUS (HMM Multi-Ativos)")
 ax_eq.plot(perf_df.index, perf_df['cum_benchmark'],
            color=COR_BENCH, linewidth=1.4, linestyle="--",
            label="Buy & Hold IBOV")
@@ -427,7 +452,7 @@ ax_eq.axvline(split, color="#C0392B", linestyle="--", linewidth=1.5,
 ret_total_s = perf_df['cum_strategy'].iloc[-1] - 1
 ret_total_b = perf_df['cum_benchmark'].iloc[-1] - 1
 ax_eq.text(0.01, 0.97,
-           f"rushInsano: {ret_total_s:.1%} acumulado",
+           f"CERBERUS: {ret_total_s:.1%} acumulado",
            transform=ax_eq.transAxes, fontsize=9.5,
            va='top', color=COR_STRAT,
            bbox=dict(fc='white', ec=COR_STRAT, alpha=0.88, pad=4, lw=1.2))
@@ -438,7 +463,7 @@ ax_eq.text(0.01, 0.88,
            bbox=dict(fc='white', ec=COR_BENCH, alpha=0.88, pad=4, lw=1.2))
 
 ax_eq.set_ylabel("Retorno Acumulado (1.0 = Capital Inicial)")
-ax_eq.set_title("rushInsano vs Buy & Hold IBOV — Performance Acumulada")
+ax_eq.set_title("CERBERUS vs Buy & Hold IBOV — Performance Acumulada")
 ax_eq.legend(loc="upper left", framealpha=0.92, ncol=2)
 ax_eq.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:.1f}x"))
 plt.setp(ax_eq.get_xticklabels(), visible=False)
@@ -448,7 +473,7 @@ dd_strat = (perf_df['cum_strategy'] / perf_df['cum_strategy'].cummax() - 1) * 10
 dd_bench = (perf_df['cum_benchmark'] / perf_df['cum_benchmark'].cummax() - 1) * 100
 
 ax_dd.fill_between(perf_df.index, dd_strat, 0,
-                   alpha=0.45, color=COR_STRAT, label="Drawdown rushInsano")
+                   alpha=0.45, color=COR_STRAT, label="Drawdown CERBERUS")
 ax_dd.plot(perf_df.index, dd_bench, color=COR_BENCH,
            linewidth=1.0, linestyle="--", label="Drawdown IBOV")
 ax_dd.axvline(split, color="#C0392B", linestyle="--", linewidth=1.5, alpha=0.6)
@@ -507,7 +532,7 @@ cbar = plt.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
 cbar.set_label("Retorno Mensal", fontsize=10)
 cbar.ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
 
-ax.set_title("Retornos Mensais da Estratégia rushInsano — Calendário de Performance")
+ax.set_title("Retornos Mensais da Estratégia CERBERUS — Calendário de Performance")
 ax.set_xlabel("Mês")
 ax.set_ylabel("Ano")
 plt.tight_layout()
@@ -540,7 +565,7 @@ ax.fill_between(roll_sharpe.index, roll_sharpe.values, 0,
 
 ax.plot(roll_sharpe.index, roll_sharpe.values,
         color=COR_STRAT, linewidth=1.8,
-        label="Sharpe Móvel — rushInsano")
+        label="Sharpe Móvel — CERBERUS")
 ax.plot(roll_sharpe_b.index, roll_sharpe_b.values,
         color=COR_BENCH, linewidth=1.2, linestyle="--",
         label="Sharpe Móvel — IBOV")
@@ -584,20 +609,20 @@ x_range = np.linspace(
 ax.hist(r_b, bins=80, density=True, color=COR_BENCH, alpha=0.30,
         edgecolor='white', linewidth=0.3, label="IBOV (histograma)")
 ax.hist(r_s, bins=80, density=True, color=COR_STRAT, alpha=0.30,
-        edgecolor='white', linewidth=0.3, label="rushInsano (histograma)")
+        edgecolor='white', linewidth=0.3, label="CERBERUS (histograma)")
 
 # KDEs
 kde_s = gaussian_kde(r_s, bw_method=0.3)
 kde_b = gaussian_kde(r_b, bw_method=0.3)
 ax.plot(x_range, kde_s(x_range), color=COR_STRAT, linewidth=2.2,
-        label="rushInsano (KDE)")
+        label="CERBERUS (KDE)")
 ax.plot(x_range, kde_b(x_range), color=COR_BENCH, linewidth=2.0,
         linestyle="--", label="IBOV (KDE)")
 
 ax.axvline(0, color="#AAAAAA", linewidth=0.8, linestyle=":")
 
 # Box de estatísticas
-stats_s = (f"rushInsano\n"
+stats_s = (f"CERBERUS\n"
            f"μ = {r_s.mean():.3%}  σ = {r_s.std():.3%}\n"
            f"Kurt = {r_s.kurt():.2f}  Skew = {r_s.skew():.2f}")
 stats_b = (f"IBOV\n"
@@ -611,7 +636,7 @@ ax.text(0.02, 0.74, stats_b, transform=ax.transAxes, fontsize=8.5,
         va='top', color=COR_BENCH,
         bbox=dict(fc='white', ec=COR_BENCH, alpha=0.88, pad=5, lw=1.2))
 
-ax.set_title("Distribuição dos Retornos Diários — rushInsano vs IBOV")
+ax.set_title("Distribuição dos Retornos Diários — CERBERUS vs IBOV")
 ax.set_xlabel("Retorno Diário")
 ax.set_ylabel("Densidade")
 ax.xaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=1))
@@ -624,7 +649,7 @@ plt.show()
 # ║  TABELA DE MÉTRICAS ESTENDIDAS                                            ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 print("\n" + "═" * 72)
-print("  MÉTRICAS ESTENDIDAS — rushInsano".center(72))
+print("  MÉTRICAS ESTENDIDAS — CERBERUS".center(72))
 print("═" * 72)
 
 def metricas(ret_series, equity_series, nome_periodo, nome_strat):
@@ -664,11 +689,11 @@ for periodo, df_p in [("TOTAL (2010–2025)", perf_df),
                        ("OUT-OF-SAMPLE (2019–2025)", out_s)]:
     metricas(df_p['strategy_returns'],
              df_p['cum_strategy'],
-             periodo, "rushInsano")
+             periodo, "CERBERUS")
     metricas(df_p['benchmark_returns'],
              df_p['cum_benchmark'],
              periodo, "IBOV B&H")
 
 print("\n" + "═" * 72)
-print("  Gráficos salvos: fig1 a fig10 (.png) na pasta rushInsano")
+print("  Gráficos salvos: fig1 a fig10 (.png) na pasta CERBERUS")
 print("═" * 72)
