@@ -1,0 +1,98 @@
+import numpy as np
+import pandas as pd
+from scipy.stats import entropy
+from hmmlearn.hmm import GaussianHMM
+
+
+def compute_hmm_entropy(
+    returns: pd.Series,
+    n_states: int = 3,
+    train_end: str = "2015-12-31",
+    threshold: float = 0.8,
+    reduction: float = 0.5,
+) -> pd.DataFrame:
+    """
+    Calcula a entropia de Shannon das probabilidades dos estados HMM.
+    
+    Alta entropia = modelo incerto sobre o regime = sinal de risco.
+    
+    Retorna DataFrame com:
+        - entropy     : entropia diária
+        - risk_mult   : multiplicador de exposição (1.0 ou reduction)
+        - high_entropy: bool, True quando entropia > threshold
+    """
+    # Treino apenas até train_end
+    returns_train = returns.loc[:train_end].dropna()
+    returns_full = returns.dropna()
+
+    # Treinar HMM
+    model = GaussianHMM(
+        n_components=n_states,
+        covariance_type="full",
+        n_iter=1000,
+        random_state=42
+    )
+    model.fit(returns_train.values.reshape(-1, 1))
+
+    # Probabilidades posteriores para todo o período
+    probs = model.predict_proba(returns_full.values.reshape(-1, 1))
+
+    # Entropia de Shannon por dia
+    ent = np.array([entropy(p) for p in probs])
+
+    # Multiplicador: alta entropia -> reduz exposição
+    risk_mult = np.where(ent > threshold, reduction, 1.0)
+
+    result = pd.DataFrame({
+        "entropy": ent,
+        "risk_mult": risk_mult,
+        "high_entropy": ent > threshold,
+    }, index=returns_full.index)
+
+    return result
+
+
+if __name__ == "__main__":
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    # Carregar dados
+    ibov = pd.read_csv("ibov_2010_2025.csv", skiprows=[1], parse_dates=["Date"])
+    ibov.set_index("Date", inplace=True)
+    ibov.sort_index(inplace=True)
+
+    returns = ibov["Adj Close"].pct_change().dropna()
+
+    # Calcular entropia
+    result = compute_hmm_entropy(returns, train_end="2015-12-31")
+
+    print(result.tail(20))
+    print(f"\nDias com alta entropia: {result['high_entropy'].sum()}")
+    print(f"Total de dias: {len(result)}")
+
+    # Plot
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+
+    ax1.plot(returns.index, returns.values, color="gray", alpha=0.5)
+    ax1.set_title("Retornos IBOV")
+    ax1.set_ylabel("Retorno diário")
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(result.index, result["entropy"], color="purple", alpha=0.8)
+    ax2.axhline(y=0.8, color="red", linestyle="--", label="Threshold (0.8)")
+    ax2.fill_between(
+        result.index,
+        result["entropy"],
+        where=result["high_entropy"],
+        color="red",
+        alpha=0.3,
+        label="Alta entropia (risco)"
+    )
+    ax2.set_title("Entropia de Shannon dos Estados HMM")
+    ax2.set_ylabel("Entropia")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig("entropy_filter.png", dpi=300)
+    plt.show()
