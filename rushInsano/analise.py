@@ -427,54 +427,59 @@ gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.06)
 ax_eq  = fig.add_subplot(gs[0])
 ax_dd  = fig.add_subplot(gs[1], sharex=ax_eq)
 
+# Filtra apenas o período OOS e rebasa ambas as curvas a 1.0 no split
+plot_df = perf_df[perf_df.index >= split].copy()
+plot_df['cum_strategy_oos']  = (1 + plot_df['strategy_returns']).cumprod()
+plot_df['cum_benchmark_oos'] = (1 + plot_df['benchmark_returns']).cumprod()
+
 # Equity
-ax_eq.plot(perf_df.index, perf_df['cum_strategy'],
+ax_eq.plot(plot_df.index, plot_df['cum_strategy_oos'],
            color=COR_STRAT, linewidth=2.0,
            label="CERBERUS (HMM Multi-Ativos)")
-ax_eq.plot(perf_df.index, perf_df['cum_benchmark'],
+ax_eq.plot(plot_df.index, plot_df['cum_benchmark_oos'],
            color=COR_BENCH, linewidth=1.4, linestyle="--",
            label="Buy & Hold IBOV")
 
 # Alpha fill
-ax_eq.fill_between(perf_df.index,
-                   perf_df['cum_strategy'], perf_df['cum_benchmark'],
-                   where=(perf_df['cum_strategy'] >= perf_df['cum_benchmark']),
+ax_eq.fill_between(plot_df.index,
+                   plot_df['cum_strategy_oos'], plot_df['cum_benchmark_oos'],
+                   where=(plot_df['cum_strategy_oos'] >= plot_df['cum_benchmark_oos']),
                    alpha=0.12, color="#27AE60", label="Alpha positivo")
-ax_eq.fill_between(perf_df.index,
-                   perf_df['cum_strategy'], perf_df['cum_benchmark'],
-                   where=(perf_df['cum_strategy'] < perf_df['cum_benchmark']),
+ax_eq.fill_between(plot_df.index,
+                   plot_df['cum_strategy_oos'], plot_df['cum_benchmark_oos'],
+                   where=(plot_df['cum_strategy_oos'] < plot_df['cum_benchmark_oos']),
                    alpha=0.12, color="#E74C3C", label="Abaixo do benchmark")
 
 ax_eq.axvline(split, color="#C0392B", linestyle="--", linewidth=1.5,
               label="Início do Teste (2019)")
 
-# Métricas no gráfico
-ret_total_s = perf_df['cum_strategy'].iloc[-1] - 1
-ret_total_b = perf_df['cum_benchmark'].iloc[-1] - 1
+# Métricas no gráfico (calculadas sobre o OOS)
+ret_total_s = plot_df['cum_strategy_oos'].iloc[-1] - 1
+ret_total_b = plot_df['cum_benchmark_oos'].iloc[-1] - 1
 ax_eq.text(0.01, 0.97,
-           f"CERBERUS: {ret_total_s:.1%} acumulado",
+           f"CERBERUS: {ret_total_s:.1%} acumulado (OOS)",
            transform=ax_eq.transAxes, fontsize=9.5,
            va='top', color=COR_STRAT,
            bbox=dict(fc='white', ec=COR_STRAT, alpha=0.88, pad=4, lw=1.2))
 ax_eq.text(0.01, 0.88,
-           f"IBOV B&H:   {ret_total_b:.1%} acumulado",
+           f"IBOV B&H:   {ret_total_b:.1%} acumulado (OOS)",
            transform=ax_eq.transAxes, fontsize=9.5,
            va='top', color=COR_BENCH,
            bbox=dict(fc='white', ec=COR_BENCH, alpha=0.88, pad=4, lw=1.2))
 
-ax_eq.set_ylabel("Retorno Acumulado (1.0 = Capital Inicial)")
-ax_eq.set_title("CERBERUS vs Buy & Hold IBOV — Performance Acumulada")
+ax_eq.set_ylabel("Retorno Acumulado (1.0 = Capital Inicial em Jan/2019)")
+ax_eq.set_title("CERBERUS vs Buy & Hold IBOV — Performance Acumulada (Out-of-Sample)")
 ax_eq.legend(loc="upper left", framealpha=0.92, ncol=2)
 ax_eq.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:.1f}x"))
 plt.setp(ax_eq.get_xticklabels(), visible=False)
 
-# Drawdown
-dd_strat = (perf_df['cum_strategy'] / perf_df['cum_strategy'].cummax() - 1) * 100
-dd_bench = (perf_df['cum_benchmark'] / perf_df['cum_benchmark'].cummax() - 1) * 100
+# Drawdown — também apenas OOS
+dd_strat = (plot_df['cum_strategy_oos']  / plot_df['cum_strategy_oos'].cummax()  - 1) * 100
+dd_bench = (plot_df['cum_benchmark_oos'] / plot_df['cum_benchmark_oos'].cummax() - 1) * 100
 
-ax_dd.fill_between(perf_df.index, dd_strat, 0,
+ax_dd.fill_between(plot_df.index, dd_strat, 0,
                    alpha=0.45, color=COR_STRAT, label="Drawdown CERBERUS")
-ax_dd.plot(perf_df.index, dd_bench, color=COR_BENCH,
+ax_dd.plot(plot_df.index, dd_bench, color=COR_BENCH,
            linewidth=1.0, linestyle="--", label="Drawdown IBOV")
 ax_dd.axvline(split, color="#C0392B", linestyle="--", linewidth=1.5, alpha=0.6)
 
@@ -545,6 +550,9 @@ plt.show()
 print("Gerando Figure 9 — Rolling Sharpe...")
 
 window_sharpe = 252
+
+# Calcula o rolling sharpe sobre o perf_df completo para ter janela cheia,
+# mas plota APENAS o período OOS (evita o trecho vazio pré-2019)
 roll_mean = perf_df['strategy_returns'].rolling(window_sharpe).mean()
 roll_std  = perf_df['strategy_returns'].rolling(window_sharpe).std()
 roll_sharpe = (roll_mean / roll_std) * np.sqrt(252)
@@ -553,32 +561,35 @@ roll_mean_b = perf_df['benchmark_returns'].rolling(window_sharpe).mean()
 roll_std_b  = perf_df['benchmark_returns'].rolling(window_sharpe).std()
 roll_sharpe_b = (roll_mean_b / roll_std_b) * np.sqrt(252)
 
+# Filtra apenas OOS para plotagem
+rs_plot   = roll_sharpe[perf_df.index >= split]
+rs_b_plot = roll_sharpe_b[perf_df.index >= split]
+
 fig, ax = plt.subplots(figsize=(16, 5))
 fig.patch.set_facecolor("#F8F9FA")
 
-ax.fill_between(roll_sharpe.index, roll_sharpe.values, 0,
-                where=(roll_sharpe.values >= 0),
+ax.fill_between(rs_plot.index, rs_plot.values, 0,
+                where=(rs_plot.values >= 0),
                 alpha=0.20, color="#27AE60")
-ax.fill_between(roll_sharpe.index, roll_sharpe.values, 0,
-                where=(roll_sharpe.values < 0),
+ax.fill_between(rs_plot.index, rs_plot.values, 0,
+                where=(rs_plot.values < 0),
                 alpha=0.20, color="#E74C3C")
 
-ax.plot(roll_sharpe.index, roll_sharpe.values,
+ax.plot(rs_plot.index, rs_plot.values,
         color=COR_STRAT, linewidth=1.8,
         label="Sharpe Móvel — CERBERUS")
-ax.plot(roll_sharpe_b.index, roll_sharpe_b.values,
+ax.plot(rs_b_plot.index, rs_b_plot.values,
         color=COR_BENCH, linewidth=1.2, linestyle="--",
         label="Sharpe Móvel — IBOV")
 
 ax.axhline(0, color="#888888", linewidth=0.8, linestyle="-")
 ax.axhline(1, color="#27AE60", linewidth=0.8, linestyle=":",
            label="Sharpe = 1 (referência)")
-ax.axvline(split, color="#C0392B", linestyle="--", linewidth=1.5, alpha=0.6,
-           label="Início do Teste (2019)")
 
 for nome, data in CRISES.items():
     d = pd.to_datetime(data)
-    ax.axvline(d, color="#7F8C8D", linestyle=":", linewidth=1.0, alpha=0.6)
+    if d >= split:
+        ax.axvline(d, color="#7F8C8D", linestyle=":", linewidth=1.0, alpha=0.6)
 
 ax.set_title(f"Sharpe Ratio Móvel ({window_sharpe} dias) — Qualidade do Sinal ao Longo do Tempo")
 ax.set_xlabel("Data")
@@ -652,17 +663,26 @@ print("\n" + "═" * 72)
 print("  MÉTRICAS ESTENDIDAS — CERBERUS".center(72))
 print("═" * 72)
 
-def metricas(ret_series, equity_series, nome_periodo, nome_strat):
-    r  = ret_series.dropna()
-    eq = equity_series.dropna()
+def metricas(ret_series, nome_periodo, nome_strat):
+    r = ret_series.dropna()
+
+    if len(r) < 2:
+        print(f"\n  [{nome_strat}] — {nome_periodo}")
+        print(f"  {'─'*66}")
+        print(f"  Dados insuficientes para calcular métricas.")
+        print(f"  {'─'*66}")
+        return
+
+    # Reconstrói o equity a partir dos retornos do período (rebase a 1.0)
+    eq = (1 + r).cumprod()
 
     anos    = len(r) / 252
-    cum     = eq.iloc[-1] / eq.iloc[0] - 1
-    cagr    = (eq.iloc[-1] / eq.iloc[0]) ** (1 / anos) - 1 if anos > 0 else 0
+    cum     = eq.iloc[-1] - 1
+    cagr    = eq.iloc[-1] ** (1 / anos) - 1 if anos > 0 else 0
     vol     = r.std() * np.sqrt(252)
     sharpe  = (r.mean() / r.std()) * np.sqrt(252) if r.std() > 0 else 0
     neg     = r[r < 0]
-    sortino = (r.mean() / neg.std()) * np.sqrt(252) if neg.std() > 0 else 0
+    sortino = (r.mean() / neg.std()) * np.sqrt(252) if len(neg) > 1 and neg.std() > 0 else 0
     mdd     = (eq / eq.cummax() - 1).min()
     calmar  = cagr / abs(mdd) if mdd != 0 else 0
     hit     = (r[r != 0] > 0).mean()
@@ -687,13 +707,260 @@ out_s = perf_df[perf_df.index >= split_pd]
 for periodo, df_p in [("TOTAL (2010–2025)", perf_df),
                        ("IN-SAMPLE (2010–2018)", in_s),
                        ("OUT-OF-SAMPLE (2019–2025)", out_s)]:
-    metricas(df_p['strategy_returns'],
-             df_p['cum_strategy'],
-             periodo, "CERBERUS")
-    metricas(df_p['benchmark_returns'],
-             df_p['cum_benchmark'],
-             periodo, "IBOV B&H")
+    metricas(df_p['strategy_returns'],  periodo, "CERBERUS")
+    metricas(df_p['benchmark_returns'], periodo, "IBOV B&H")
 
 print("\n" + "═" * 72)
 print("  Gráficos salvos: fig1 a fig10 (.png) na pasta CERBERUS")
+print("═" * 72)
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  FIG 11 — Ativação dos Sinais de Controle de Exposição (OOS)             ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+print("\nGerando Figure 11 — Sinais de Controle de Exposição...")
+
+# ── Reconstrução dos sinais dia a dia (OOS) ───────────────────────────────
+# Usa o ibov completo para o rolling, mas plota apenas OOS
+ibov_full = pipeline.ibov.copy()
+
+THRESH_ENTROPY  = 0.6   # mesmo valor do backtester
+WINDOW_ROLL     = 252   # janela rolling para percentis
+
+# Sinal 1 — Entropia HMM
+ibov_full['sig_entropy'] = (ibov_full['hmm_entropy'] > THRESH_ENTROPY).astype(float)
+ibov_full['sig_entropy'] = ibov_full['sig_entropy'].where(ibov_full['hmm_entropy'].notna())
+
+# Sinal 2 — Conectividade (density > p80 rolling) — mesmo cálculo do backtester
+ibov_full['density_p80'] = ibov_full['density'].rolling(WINDOW_ROLL, min_periods=63).quantile(0.80)
+ibov_full['sig_density'] = (ibov_full['density'] > ibov_full['density_p80']).astype(float)
+ibov_full['sig_density'] = ibov_full['sig_density'].where(ibov_full['density'].notna())
+
+# Sinal 3 — Vol-of-Vol (p80 rolling — indicador visual; não reduz exposure no backtester atual)
+ibov_full['vov_p80']  = ibov_full['vol_of_vol'].rolling(WINDOW_ROLL, min_periods=63).quantile(0.80)
+ibov_full['sig_vov']  = (ibov_full['vol_of_vol'] > ibov_full['vov_p80']).astype(float)
+ibov_full['sig_vov']  = ibov_full['sig_vov'].where(ibov_full['vol_of_vol'].notna())
+
+# Exposure modifier resultante (replica a lógica do backtester)
+ibov_full['exposure'] = 1.0
+ibov_full.loc[ibov_full['sig_entropy'] == 1, 'exposure'] *= 0.5
+ibov_full.loc[ibov_full['sig_density'] == 1, 'exposure'] *= 0.5
+
+# Filtra OOS para plotagem
+oos = ibov_full[ibov_full.index >= split].copy()
+
+# Estatísticas de ativação
+n_total   = len(oos.dropna(subset=['hmm_entropy']))
+n_entropy = int(oos['sig_entropy'].sum())
+n_density = int(oos['sig_density'].sum())
+n_vov     = int(oos['sig_vov'].sum())
+n_quarter = int((oos['exposure'] == 0.25).sum())
+n_half    = int((oos['exposure'] == 0.5).sum())
+n_full    = int((oos['exposure'] == 1.0).sum())
+
+print(f"  Entropia ativa:    {n_entropy:>4} dias ({n_entropy/n_total:.1%})")
+print(f"  Density ativa:     {n_density:>4} dias ({n_density/n_total:.1%})")
+print(f"  VoV ativa:         {n_vov:>4} dias ({n_vov/n_total:.1%})")
+print(f"  Exposure 100%:     {n_full:>4} dias | 50%: {n_half} | 25%: {n_quarter}")
+
+# ── Layout: 5 painéis compartilhando eixo X ──────────────────────────────
+fig = plt.figure(figsize=(17, 14))
+fig.patch.set_facecolor("#F8F9FA")
+gs11 = GridSpec(5, 1, height_ratios=[2, 1, 1, 1, 1], hspace=0.06)
+
+ax_exp   = fig.add_subplot(gs11[0])
+ax_ent   = fig.add_subplot(gs11[1], sharex=ax_exp)
+ax_den   = fig.add_subplot(gs11[2], sharex=ax_exp)
+ax_vov   = fig.add_subplot(gs11[3], sharex=ax_exp)
+ax_eq_s  = fig.add_subplot(gs11[4], sharex=ax_exp)
+
+# ── Painel 0: Exposure Modifier ──────────────────────────────────────────
+# Faixas coloridas por nível de exposure
+for i in range(len(oos) - 1):
+    exp = oos['exposure'].iloc[i]
+    if pd.isna(exp):
+        continue
+    cor = {1.0: "#27AE60", 0.5: "#F39C12", 0.25: "#E74C3C"}.get(exp, "#AAAAAA")
+    ax_exp.axvspan(oos.index[i], oos.index[i+1], color=cor, alpha=0.35, linewidth=0)
+
+# Linha do exposure
+ax_exp.step(oos.index, oos['exposure'], where='post',
+            color="#1C252E", linewidth=1.4, label="Exposure Modifier")
+ax_exp.set_ylim(-0.05, 1.15)
+ax_exp.set_yticks([0.25, 0.5, 1.0])
+ax_exp.set_yticklabels(["25% (duplo\nbloqueio)", "50% (um\nbloqueio)", "100% (livre)"], fontsize=8)
+ax_exp.set_ylabel("Exposição\nao Mercado", fontsize=9)
+ax_exp.set_title("Ativação dos Sinais de Controle de Exposição — CERBERUS (Out-of-Sample)",
+                 fontsize=13, fontweight='bold', pad=10)
+
+# Legenda de exposição
+patches_exp = [
+    mpatches.Patch(color="#27AE60", alpha=0.5, label=f"100% — livre ({n_full} dias)"),
+    mpatches.Patch(color="#F39C12", alpha=0.5, label=f"50% — 1 sinal ativo ({n_half} dias)"),
+    mpatches.Patch(color="#E74C3C", alpha=0.5, label=f"25% — 2 sinais ativos ({n_quarter} dias)"),
+]
+ax_exp.legend(handles=patches_exp, loc="lower left", fontsize=8.5, framealpha=0.92, ncol=3)
+plt.setp(ax_exp.get_xticklabels(), visible=False)
+
+# ── Painel 1: Entropia HMM ────────────────────────────────────────────────
+ax_ent.plot(oos.index, oos['hmm_entropy'], color="#8E44AD", linewidth=1.0, alpha=0.85,
+            label="Entropia HMM")
+ax_ent.axhline(THRESH_ENTROPY, color="#C0392B", linewidth=1.2, linestyle="--",
+               label=f"Limiar ({THRESH_ENTROPY})")
+ax_ent.fill_between(oos.index, oos['hmm_entropy'], THRESH_ENTROPY,
+                    where=(oos['hmm_entropy'] > THRESH_ENTROPY),
+                    color="#8E44AD", alpha=0.30, label=f"Ativo ({n_entropy} dias)")
+ax_ent.set_ylabel("Entropia\nHMM", fontsize=9)
+ax_ent.set_ylim(0, oos['hmm_entropy'].max() * 1.15)
+ax_ent.legend(loc="upper right", fontsize=8, framealpha=0.92, ncol=3)
+plt.setp(ax_ent.get_xticklabels(), visible=False)
+
+# ── Painel 2: Conectividade (Density) ────────────────────────────────────
+ax_den.plot(oos.index, oos['density'],     color="#2980B9", linewidth=1.0, alpha=0.85,
+            label="Density")
+ax_den.plot(oos.index, oos['density_p80'], color="#C0392B", linewidth=1.2, linestyle="--",
+            label="P80 rolling 252d")
+ax_den.fill_between(oos.index, oos['density'], oos['density_p80'],
+                    where=(oos['density'] > oos['density_p80']),
+                    color="#2980B9", alpha=0.30, label=f"Ativo ({n_density} dias)")
+ax_den.set_ylabel("Conectividade\n(Density)", fontsize=9)
+ax_den.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+ax_den.legend(loc="upper right", fontsize=8, framealpha=0.92, ncol=3)
+plt.setp(ax_den.get_xticklabels(), visible=False)
+
+# ── Painel 3: Vol-of-Vol ─────────────────────────────────────────────────
+ax_vov.plot(oos.index, oos['vol_of_vol'], color="#E67E22", linewidth=1.0, alpha=0.85,
+            label="Vol-of-Vol")
+ax_vov.plot(oos.index, oos['vov_p80'],   color="#C0392B", linewidth=1.2, linestyle="--",
+            label="P80 rolling 252d")
+ax_vov.fill_between(oos.index, oos['vol_of_vol'], oos['vov_p80'],
+                    where=(oos['vol_of_vol'] > oos['vov_p80']),
+                    color="#E67E22", alpha=0.30,
+                    label=f"Acima P80 ({n_vov} dias) [visual]")
+ax_vov.set_ylabel("Vol-of-Vol", fontsize=9)
+ax_vov.legend(loc="upper right", fontsize=8, framealpha=0.92, ncol=3)
+plt.setp(ax_vov.get_xticklabels(), visible=False)
+
+# ── Painel 4: Equity CERBERUS (contexto) ─────────────────────────────────
+oos_perf = perf_df[perf_df.index >= split].copy()
+cum_s = (1 + oos_perf['strategy_returns']).cumprod()
+cum_b = (1 + oos_perf['benchmark_returns']).cumprod()
+ax_eq_s.plot(oos_perf.index, cum_s, color=COR_STRAT, linewidth=1.4, label="CERBERUS")
+ax_eq_s.plot(oos_perf.index, cum_b, color=COR_BENCH, linewidth=1.0,
+             linestyle="--", alpha=0.7, label="IBOV B&H")
+ax_eq_s.set_ylabel("Retorno\nAcumulado", fontsize=9)
+ax_eq_s.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:.1f}x"))
+ax_eq_s.set_xlabel("Data", fontsize=10)
+ax_eq_s.legend(loc="upper left", fontsize=8, framealpha=0.92, ncol=2)
+
+# Crises em todos os painéis
+for ax in [ax_exp, ax_ent, ax_den, ax_vov, ax_eq_s]:
+    for nome, data in CRISES.items():
+        d = pd.to_datetime(data)
+        if d >= split:
+            ax.axvline(d, color="#7F8C8D", linestyle=":", linewidth=0.9, alpha=0.6)
+
+plt.savefig("fig11_sinais_controle.png", dpi=180, bbox_inches='tight')
+plt.show()
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  FIG 12 — Desenvolvimento da Vol-of-Vol ao Longo do Tempo                ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+print("Gerando Figure 12 — Vol-of-Vol ao longo do tempo...")
+
+vov_full = ibov_full[['vol_of_vol', 'volatility', 'vov_p80', 'hmm_state']].dropna(subset=['vol_of_vol'])
+
+fig, axes = plt.subplots(3, 1, figsize=(17, 11),
+                         gridspec_kw={'height_ratios': [2.5, 1.2, 1.2]},
+                         sharex=True)
+fig.patch.set_facecolor("#F8F9FA")
+ax_vov_main, ax_vol, ax_reg = axes
+
+# ── Painel 0: Vol-of-Vol principal + bandas por regime ───────────────────
+for estado, cor in cor_regime.items():
+    mask = vov_full['hmm_state'] == estado
+    ax_vov_main.fill_between(vov_full.index, 0, vov_full['vol_of_vol'],
+                             where=mask, color=cor, alpha=0.22, linewidth=0)
+
+ax_vov_main.plot(vov_full.index, vov_full['vol_of_vol'],
+                 color="#1C252E", linewidth=1.3, alpha=0.9, label="Vol-of-Vol (diária)")
+
+# Média móvel 63 dias (suavização trimestral)
+vov_ma63 = vov_full['vol_of_vol'].rolling(63).mean()
+ax_vov_main.plot(vov_full.index, vov_ma63,
+                 color="#E74C3C", linewidth=1.8, linestyle="-",
+                 label="Média móvel 63d (trimestral)")
+
+# P80 rolling
+ax_vov_main.plot(vov_full.index, vov_full['vov_p80'],
+                 color="#C0392B", linewidth=1.2, linestyle="--",
+                 label="P80 rolling 252d (limiar de alerta)")
+
+# Linha do split
+ax_vov_main.axvline(split, color="#C0392B", linewidth=1.5, linestyle="--",
+                    alpha=0.7, label="Início do Teste (2019)")
+
+# Anotações de crises
+for nome, data in CRISES.items():
+    d = pd.to_datetime(data)
+    if d in vov_full.index or vov_full.index.searchsorted(d) < len(vov_full):
+        ymax = vov_full['vol_of_vol'].max()
+        ax_vov_main.axvline(d, color="#7F8C8D", linestyle=":", linewidth=0.9, alpha=0.7)
+        ax_vov_main.text(d, ymax * 0.97, nome, fontsize=7, color="#555",
+                         ha='center', va='top',
+                         bbox=dict(fc='white', ec='none', alpha=0.7, pad=1.5))
+
+# Legenda de regimes
+patches_reg = [mpatches.Patch(color=cor_regime[k], alpha=0.4, label=label_map[k])
+               for k in cor_regime]
+handles_main, labels_main = ax_vov_main.get_legend_handles_labels()
+ax_vov_main.legend(handles=handles_main + patches_reg,
+                   loc="upper left", fontsize=8.5, framealpha=0.92, ncol=3)
+
+ax_vov_main.set_ylabel("Vol-of-Vol (σ da volatilidade)", fontsize=10)
+ax_vov_main.set_title("Desenvolvimento da Volatilidade da Volatilidade (Vol-of-Vol) — 2010 a 2025",
+                      fontsize=13, fontweight='bold', pad=10)
+plt.setp(ax_vov_main.get_xticklabels(), visible=False)
+
+# ── Painel 1: Volatilidade base (contexto) ────────────────────────────────
+ax_vol.fill_between(vov_full.index, vov_full['volatility'],
+                    color="#2980B9", alpha=0.30)
+ax_vol.plot(vov_full.index, vov_full['volatility'],
+            color="#2980B9", linewidth=1.2, label="Volatilidade anualizada (21d)")
+ax_vol.axhline(vov_full['volatility'].mean(), color="#C0392B",
+               linewidth=1.0, linestyle="--",
+               label=f"Média histórica ({vov_full['volatility'].mean():.1%})")
+ax_vol.axvline(split, color="#C0392B", linewidth=1.2, linestyle="--", alpha=0.6)
+ax_vol.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=0))
+ax_vol.set_ylabel("Volatilidade\n(anualizada)", fontsize=9)
+ax_vol.legend(loc="upper left", fontsize=8.5, framealpha=0.92, ncol=2)
+for d_str in CRISES.values():
+    ax_vol.axvline(pd.to_datetime(d_str), color="#7F8C8D",
+                   linestyle=":", linewidth=0.9, alpha=0.6)
+plt.setp(ax_vol.get_xticklabels(), visible=False)
+
+# ── Painel 2: Razão VoV / Volatilidade (normalização) ─────────────────────
+# Quanto a VoV representa da volatilidade base — alto = regime instável
+ratio = (vov_full['vol_of_vol'] / vov_full['volatility']).replace([np.inf, -np.inf], np.nan)
+ratio_ma = ratio.rolling(21).mean()
+
+ax_reg.plot(ratio.index, ratio, color="#95A5A6", linewidth=0.8, alpha=0.5)
+ax_reg.plot(ratio_ma.index, ratio_ma, color="#8E44AD", linewidth=1.6,
+            label="Razão VoV / Volatilidade (MA21)")
+ax_reg.axhline(ratio.mean(), color="#C0392B", linewidth=1.0, linestyle="--",
+               label=f"Média ({ratio.mean():.2f})")
+ax_reg.axhline(ratio.quantile(0.80), color="#E67E22", linewidth=1.0, linestyle=":",
+               label=f"P80 ({ratio.quantile(0.80):.2f})")
+ax_reg.axvline(split, color="#C0392B", linewidth=1.2, linestyle="--", alpha=0.6)
+ax_reg.set_ylabel("VoV / Vol\n(instabilidade)", fontsize=9)
+ax_reg.set_xlabel("Data", fontsize=10)
+ax_reg.legend(loc="upper left", fontsize=8.5, framealpha=0.92, ncol=3)
+for d_str in CRISES.values():
+    ax_reg.axvline(pd.to_datetime(d_str), color="#7F8C8D",
+                   linestyle=":", linewidth=0.9, alpha=0.6)
+
+plt.savefig("fig12_vol_of_vol.png", dpi=180, bbox_inches='tight')
+plt.show()
+
+print("\n" + "═" * 72)
+print("  Gráficos salvos: fig1 a fig12 (.png) na pasta CERBERUS")
 print("═" * 72)
