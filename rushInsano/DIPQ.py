@@ -97,8 +97,8 @@ class QuantStrategyPipeline:
         print(f"[CDI] Série carregada com haircut de {CDI_HAIRCUT:.0%}. "
                 f"CDI médio efetivo: {self.ibov['cdi_retorno'].mean()*252:.2%} a.a.")
 
-        self.b3.plot(title='b3')
-        self.ibov.plot(title='ibov')
+        #self.b3.plot(title='b3')
+        #self.ibov.plot(title='ibov')
 
     #def fetch_data(self): (data é o ibov e net_data é o b3)
 
@@ -122,8 +122,8 @@ class QuantStrategyPipeline:
         rs = gain / loss
         self.b3_rsi = 100 - (100 / (1 + rs))
 
-        self.ibov.plot()
-        self.b3.plot
+        #self.ibov.plot()
+        #self.b3.plot
 
     # CONECTIVIDADE DE REDE
     def net_analysis(self, df=None, window=21):
@@ -164,7 +164,7 @@ class QuantStrategyPipeline:
         df['density'] = densities
         df['max_eigen_value'] = max_eigen_values
 
-        df.plot()
+        #df.plot()
 
         return df
 
@@ -311,6 +311,10 @@ class QuantStrategyPipeline:
 
         # ── Treino inicial e predição in-sample ───────────────────────
         model, state_map = self._train_hmm_on_data(train_data)
+
+        self.plot_gmm_hmm_states(model, train_data)
+        self.plot_gmm_hmm_3d_animated(model, train_data)
+
         X_train = train_data[['returns', 'volatility']].values
         states_train, probs_train = self._predict_online(model, state_map, X_train)
 
@@ -369,7 +373,7 @@ class QuantStrategyPipeline:
         all_results = pd.concat([train_result, test_result])
 
         self.ibov = self.ibov.join(all_results[['hmm_state', 'hmm_entropy']])
-        self.ibov[['hmm_state', 'hmm_entropy']].plot()
+        #self.ibov[['hmm_state', 'hmm_entropy']].plot()
 
 # =====================================================================
 # SEÇÃO 4 E 5: BACKTESTER (GERENCIAMENTO DE RISCO E ESTRATÉGIAS)
@@ -577,7 +581,359 @@ class QuantStrategyPipeline:
         calcular_e_imprimir_metricas(in_sample,  "IN-SAMPLE (TREINAMENTO)")
         calcular_e_imprimir_metricas(out_sample, "OUT-OF-SAMPLE (TESTE)")
 
+    def plot_gmm_hmm_states(self, model, train_df):
+        """
+        Visualização rica das distribuições GMM-HMM por estado.
 
+        Layout: 4 painéis
+          [0,0] Scatter principal — todos os estados sobrepostos com
+                elipses de confiança a 1σ / 2σ por mistura
+          [0,1] KDE 2-D por estado (densidade real da distribuição)
+          [1,0] Distribuição marginal de Returns por estado
+          [1,1] Distribuição marginal de Volatility por estado
+        """
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+        from matplotlib.patches import Ellipse
+        from scipy.stats import gaussian_kde
+        import numpy as np
+
+        # ── Dados limpos ──────────────────────────────────────────────────
+        if hasattr(train_df, 'dropna'):
+            clean = train_df[['returns', 'volatility']].dropna()
+            X     = clean.values
+        else:
+            X = train_df
+
+        states = model.predict(X)
+
+        # Mapeamento estado → nível de vol (para nomear os regimes)
+        state_vols = {i: X[states == i, 1].mean() for i in range(model.n_components)}
+        sorted_s   = sorted(state_vols, key=state_vols.get)
+        nomes      = {sorted_s[0]: "Momentum (baixa vol)",
+                      sorted_s[1]: "Neutro (média vol)",
+                      sorted_s[2]: "Hedge (alta vol)"}
+        CORES      = {sorted_s[0]: "#2ECC71",   # verde
+                      sorted_s[1]: "#F39C12",   # laranja
+                      sorted_s[2]: "#E74C3C"}   # vermelho
+
+        # ── Helper: elipse de confiança para 1σ e 2σ ─────────────────────
+        def _ellipse(mean, cov, n_std, color, lw, ls, alpha_fill):
+            vals, vecs = np.linalg.eigh(cov)
+            order = vals.argsort()[::-1]
+            vals, vecs = vals[order], vecs[:, order]
+            angle  = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
+            w, h   = 2 * n_std * np.sqrt(np.maximum(vals, 1e-12))
+            el_fill = Ellipse(xy=mean, width=w, height=h, angle=angle,
+                              facecolor=color, alpha=alpha_fill, linewidth=0)
+            el_edge = Ellipse(xy=mean, width=w, height=h, angle=angle,
+                              facecolor='none', edgecolor=color, lw=lw,
+                              linestyle=ls, alpha=0.95)
+            return el_fill, el_edge
+
+        # ── Layout ────────────────────────────────────────────────────────
+        fig = plt.figure(figsize=(18, 13))
+        fig.patch.set_facecolor("#F0F2F5")
+        gs  = gridspec.GridSpec(2, 2, hspace=0.32, wspace=0.28)
+
+        ax_sc  = fig.add_subplot(gs[0, 0])   # scatter + elipses
+        ax_kde = fig.add_subplot(gs[0, 1])   # KDE 2-D
+        ax_ret = fig.add_subplot(gs[1, 0])   # marginal returns
+        ax_vol = fig.add_subplot(gs[1, 1])   # marginal volatility
+
+        for ax in [ax_sc, ax_kde, ax_ret, ax_vol]:
+            ax.set_facecolor("#FAFBFC")
+
+        # ══════════════════════════════════════════════════════════════════
+        # PAINEL 0 — Scatter + elipses de confiança por mistura
+        # ══════════════════════════════════════════════════════════════════
+        for s in range(model.n_components):
+            cor   = CORES[s]
+            nome  = nomes[s]
+            mask  = states == s
+            xs, ys = X[mask, 0], X[mask, 1]
+            n_pts  = mask.sum()
+
+            # Pontos com transparência proporcional à densidade local
+            ax_sc.scatter(xs, ys, s=12, alpha=0.30, color=cor,
+                          rasterized=True, zorder=2)
+
+            # Centróide do estado (média ponderada das misturas)
+            weights = model.weights_[s]
+            centroid = (weights[:, None] * model.means_[s]).sum(axis=0)
+            ax_sc.scatter(*centroid, s=120, color=cor, marker='*',
+                          edgecolors='white', linewidths=0.8, zorder=5)
+
+            # Elipses por componente de mistura
+            for m in range(model.n_mix):
+                mean = model.means_[s][m]
+                cov  = model.covars_[s][m]
+                w    = model.weights_[s][m]
+
+                # 1σ — preenchimento suave
+                ef1, ee1 = _ellipse(mean, cov, 1.0, cor, lw=2.0,
+                                    ls='-', alpha_fill=0.08 * w * model.n_mix)
+                # 2σ — só borda tracejada
+                _,   ee2 = _ellipse(mean, cov, 2.0, cor, lw=1.2,
+                                    ls='--', alpha_fill=0.0)
+
+                for patch in [ef1, ee1, ee2]:
+                    ax_sc.add_patch(patch)
+
+                # Marca o centro de cada mistura com ×
+                ax_sc.plot(*mean, marker='x', ms=8, mew=2,
+                           color=cor, zorder=4, alpha=0.9)
+
+            # Label manual com contagem
+            ax_sc.scatter([], [], s=40, color=cor, alpha=0.7,
+                          label=f"{nome}  (n={n_pts})")
+
+        ax_sc.set_xlabel("Returns (diário)", fontsize=10)
+        ax_sc.set_ylabel("Volatilidade (anualizada)", fontsize=10)
+        ax_sc.set_title("Scatter + Elipses GMM por Estado\n"
+                        "★ = centróide do estado  ✕ = centro da mistura  "
+                        "—1σ  - - 2σ",
+                        fontsize=10, pad=8)
+        ax_sc.legend(fontsize=9, framealpha=0.92)
+        ax_sc.grid(True, linestyle=':', alpha=0.5)
+
+        # ══════════════════════════════════════════════════════════════════
+        # PAINEL 1 — KDE 2-D por estado (densidade real)
+        # ══════════════════════════════════════════════════════════════════
+        x_min, x_max = X[:, 0].min(), X[:, 0].max()
+        y_min, y_max = X[:, 1].min(), X[:, 1].max()
+        xx, yy = np.mgrid[x_min:x_max:120j, y_min:y_max:120j]
+        grid   = np.vstack([xx.ravel(), yy.ravel()])
+
+        for s in range(model.n_components):
+            cor  = CORES[s]
+            mask = states == s
+            pts  = X[mask].T
+            if pts.shape[1] < 4:
+                continue
+            kde  = gaussian_kde(pts, bw_method='scott')
+            zz   = kde(grid).reshape(xx.shape)
+            zz   = zz / zz.max()   # normaliza 0-1
+
+            # ── CORREÇÃO: cmap por cor em vez de arrays colors/alpha ──────
+            # contourf com colors=lista e alpha=lista falha quando
+            # len(colors) != len(levels) - 1.  A solução é criar um
+            # LinearSegmentedColormap transparente → cor sólida.
+            import matplotlib.colors as mcolors
+            r, g, b = mcolors.to_rgb(cor)
+            cmap_state = mcolors.LinearSegmentedColormap.from_list(
+                f'cmap_{s}',
+                [(r, g, b, 0.0),   # alpha=0 em zz=0
+                 (r, g, b, 0.38)], # alpha=0.38 em zz=1
+                N=256
+            )
+            # ─────────────────────────────────────────────────────────────
+
+            LEVELS = np.linspace(0.05, 1.0, 9)   # 9 níveis → 8 bandas OK
+            ax_kde.contourf(xx, yy, zz, levels=LEVELS, cmap=cmap_state)
+            ax_kde.contour(xx, yy, zz,
+                           levels=[0.15, 0.50, 0.85],
+                           colors=[cor], linewidths=[0.8, 1.4, 2.0],
+                           alpha=0.85)
+
+        ax_kde.set_xlabel("Returns (diário)", fontsize=10)
+        ax_kde.set_ylabel("Volatilidade (anualizada)", fontsize=10)
+        ax_kde.set_title("Densidade KDE 2-D por Estado\n"
+                         "contornos em 15% / 50% / 85% da densidade máxima",
+                         fontsize=10, pad=8)
+        # Mini legenda de cores
+        for s in range(model.n_components):
+            ax_kde.scatter([], [], color=CORES[s], s=40, label=nomes[s])
+        ax_kde.legend(fontsize=9, framealpha=0.92)
+        ax_kde.grid(True, linestyle=':', alpha=0.5)
+
+        # ══════════════════════════════════════════════════════════════════
+        # PAINEL 2 — Marginal: Returns
+        # ══════════════════════════════════════════════════════════════════
+        r_range = np.linspace(X[:, 0].min(), X[:, 0].max(), 300)
+        for s in range(model.n_components):
+            cor  = CORES[s]
+            mask = states == s
+            kde  = gaussian_kde(X[mask, 0], bw_method='scott')
+            dens = kde(r_range)
+            ax_ret.fill_between(r_range, dens, alpha=0.20, color=cor)
+            ax_ret.plot(r_range, dens, color=cor, lw=2.0, label=nomes[s])
+            # Média e desvio-padrão empírico
+            mu  = X[mask, 0].mean()
+            sig = X[mask, 0].std()
+            ax_ret.axvline(mu, color=cor, lw=1.2, linestyle='--', alpha=0.7)
+            ax_ret.text(mu, dens.max() * 0.92,
+                        f"μ={mu:.4f}\nσ={sig:.4f}",
+                        fontsize=7.5, color=cor, ha='center', va='top',
+                        bbox=dict(fc='white', ec=cor, alpha=0.75, pad=2, lw=0.8))
+
+        ax_ret.axvline(0, color='#888', lw=0.8, linestyle=':')
+        ax_ret.set_xlabel("Returns (diário)", fontsize=10)
+        ax_ret.set_ylabel("Densidade", fontsize=10)
+        ax_ret.set_title("Distribuição Marginal — Returns\n-- = média do estado",
+                         fontsize=10, pad=8)
+        ax_ret.legend(fontsize=9, framealpha=0.92)
+        ax_ret.grid(True, linestyle=':', alpha=0.5)
+
+        # ══════════════════════════════════════════════════════════════════
+        # PAINEL 3 — Marginal: Volatilidade
+        # ══════════════════════════════════════════════════════════════════
+        v_range = np.linspace(X[:, 1].min(), X[:, 1].max(), 300)
+        for s in range(model.n_components):
+            cor  = CORES[s]
+            mask = states == s
+            kde  = gaussian_kde(X[mask, 1], bw_method='scott')
+            dens = kde(v_range)
+            ax_vol.fill_between(v_range, dens, alpha=0.20, color=cor)
+            ax_vol.plot(v_range, dens, color=cor, lw=2.0, label=nomes[s])
+            mu  = X[mask, 1].mean()
+            sig = X[mask, 1].std()
+            ax_vol.axvline(mu, color=cor, lw=1.2, linestyle='--', alpha=0.7)
+            ax_vol.text(mu, dens.max() * 0.92,
+                        f"μ={mu:.3f}\nσ={sig:.3f}",
+                        fontsize=7.5, color=cor, ha='center', va='top',
+                        bbox=dict(fc='white', ec=cor, alpha=0.75, pad=2, lw=0.8))
+
+        ax_vol.set_xlabel("Volatilidade (anualizada)", fontsize=10)
+        ax_vol.set_ylabel("Densidade", fontsize=10)
+        ax_vol.set_title("Distribuição Marginal — Volatilidade\n-- = média do estado",
+                         fontsize=10, pad=8)
+        ax_vol.legend(fontsize=9, framealpha=0.92)
+        ax_vol.grid(True, linestyle=':', alpha=0.5)
+
+        fig.suptitle("Distribuições GMM-HMM por Estado — Treino In-Sample",
+                     fontsize=14, fontweight='bold', y=1.01)
+        plt.savefig("fig_gmm_hmm_states.png", dpi=180,
+                    bbox_inches='tight', facecolor=fig.get_facecolor())
+        plt.show()
+
+    def plot_gmm_hmm_3d_animated(self, model, train_df):
+        """
+        Superfície 3-D interativa com Plotly (WebGL).
+        Gira suave no browser — sem travar.
+        """
+        import numpy as np
+        import plotly.graph_objects as go
+        from scipy.stats import multivariate_normal
+
+        # ── Dados limpos ──────────────────────────────────────────────────
+        if hasattr(train_df, 'dropna'):
+            X = train_df[['returns', 'volatility']].dropna().values
+        else:
+            X = train_df
+
+        states     = model.predict(X)
+        state_vols = {i: X[states == i, 1].mean() for i in range(model.n_components)}
+        sorted_s   = sorted(state_vols, key=state_vols.get)
+        nomes      = {sorted_s[0]: "Momentum (baixa vol)",
+                    sorted_s[1]: "Neutro (média vol)",
+                    sorted_s[2]: "Hedge (alta vol)"}
+        CORES      = {sorted_s[0]: "#2ECC71",
+                    sorted_s[1]: "#F39C12",
+                    sorted_s[2]: "#E74C3C"}
+
+        # ── Grid ─────────────────────────────────────────────────────────
+        GRID_N   = 80   # pode subir à vontade — Plotly aguenta bem
+        x_range  = np.linspace(X[:, 0].min(), X[:, 0].max(), GRID_N)
+        y_range  = np.linspace(X[:, 1].min(), X[:, 1].max(), GRID_N)
+        XX, YY   = np.meshgrid(x_range, y_range)
+        grid_pts = np.column_stack([XX.ravel(), YY.ravel()])
+
+        def gmm_density(s):
+            dens = np.zeros(len(grid_pts))
+            for m in range(model.n_mix):
+                dens += (model.weights_[s][m] *
+                        multivariate_normal.pdf(
+                            grid_pts,
+                            mean=model.means_[s][m],
+                            cov=model.covars_[s][m]))
+            return dens.reshape(GRID_N, GRID_N)
+
+        prior = {s: (states == s).mean() for s in range(model.n_components)}
+        ZZ    = {s: gmm_density(s) * prior[s] for s in range(model.n_components)}
+        z_max = max(z.max() for z in ZZ.values())
+        ZZ    = {s: z / z_max for s, z in ZZ.items()}
+
+        # ── Constrói as superfícies Plotly ────────────────────────────────
+        traces = []
+        for s in sorted_s:
+            cor  = CORES[s]
+            nome = nomes[s]
+
+            # Colorscale monocromático transparente → cor sólida
+            r = int(cor[1:3], 16)
+            g = int(cor[3:5], 16)
+            b = int(cor[5:7], 16)
+            colorscale = [
+                [0.0, f'rgba({r},{g},{b},0.0)'],
+                [1.0, f'rgba({r},{g},{b},0.92)'],
+            ]
+
+            traces.append(go.Surface(
+                x=XX, y=YY, z=ZZ[s],
+                colorscale=colorscale,
+                showscale=False,
+                name=nome,
+                opacity=0.88,
+                contours=dict(
+                    z=dict(show=True, usecolormap=True,
+                        highlightcolor='white', project_z=True)
+                ),
+                hovertemplate=(
+                    "Return: %{x:.4f}<br>"
+                    "Vol: %{y:.3f}<br>"
+                    "Densidade: %{z:.4f}<extra>" + nome + "</extra>"
+                )
+            ))
+
+            # Marcadores nos centros das misturas
+            mx_list, my_list, mz_list = [], [], []
+            for m in range(model.n_mix):
+                mx, my = model.means_[s][m]
+                ix = np.argmin(np.abs(x_range - mx))
+                iy = np.argmin(np.abs(y_range - my))
+                mx_list.append(mx)
+                my_list.append(my)
+                mz_list.append(ZZ[s][iy, ix])
+
+            traces.append(go.Scatter3d(
+                x=mx_list, y=my_list, z=mz_list,
+                mode='markers',
+                marker=dict(size=6, color='white',
+                            line=dict(color=cor, width=3)),
+                name=f'{nome} — centro mistura',
+                showlegend=False,
+                hovertemplate="Centro mistura<br>Return: %{x:.4f}<br>Vol: %{y:.3f}<extra></extra>"
+            ))
+
+        # ── Layout ────────────────────────────────────────────────────────
+        fig = go.Figure(data=traces)
+        fig.update_layout(
+            title=dict(
+                text="GMM-HMM — Retorno × Volatilidade × Probabilidade",
+                font=dict(size=14, color='white'),
+                x=0.5
+            ),
+            scene=dict(
+                xaxis=dict(title='Returns', backgroundcolor='#1C1C2E',
+                        gridcolor='#444466', color='white'),
+                yaxis=dict(title='Volatilidade', backgroundcolor='#1C1C2E',
+                        gridcolor='#444466', color='white'),
+                zaxis=dict(title='Densidade (norm.)', backgroundcolor='#1C1C2E',
+                        gridcolor='#444466', color='white'),
+                bgcolor='#1C1C2E',
+                camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9))
+            ),
+            paper_bgcolor='#141519',
+            plot_bgcolor='#141519',
+            legend=dict(font=dict(color='white'), bgcolor='rgba(44,44,62,0.6)'),
+            margin=dict(l=0, r=0, t=50, b=0),
+            height=700
+        )
+
+        fig.show()   # abre no browser — gira smooth com WebGL
+        fig.write_html("fig_gmm_hmm_3d.html")
+        print("[3D] Salvo: fig_gmm_hmm_3d.html")
 # =====================================================================
 # EXECUÇÃO DO PIPELINE
 # =====================================================================
