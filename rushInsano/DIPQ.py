@@ -16,7 +16,7 @@ from scipy.special import comb
 
 STOP_LOSS_PCT            = 0.15   # drawdown máximo desde o pico-
 TRAILING_STOP_PCT        = 0.12   # recuo do equity desde o último pico 
-THRESHOLD_net_analysis = 0.7
+THRESHOLD_net_analysis = 0.7      #filtro de correlação mínima para matriz de adjacencia
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  PARÂMETROS DO CAIXA (CDI)                                               ║
@@ -392,6 +392,21 @@ class QuantStrategyPipeline:
 
         self.ibov['density_rolling_80'] = self.ibov['density'].rolling(window=252).quantile(0.8)
 
+        # ── VoV: limiar P80 rolling 252 dias (sem viés — mesmo padrão da density) ──
+        # O percentil é calculado com dados até o dia t, nunca à frente.
+        # min_periods=63 evita leituras ruidosas no início do histórico.
+        self.ibov['vov_rolling_80'] = (
+            self.ibov['vol_of_vol']
+            .rolling(window=252, min_periods=63)
+            .quantile(0.8)
+        )
+
+        self.ibov['eigen_rolling_80'] = (
+            self.ibov['max_eigen_value']
+            .rolling(window=252, min_periods=63)
+            .quantile(0.8)
+        )
+
         split_date_pd = pd.to_datetime(self.split_date)
         df_teste = self.ibov.loc[split_date_pd:]
 
@@ -410,6 +425,21 @@ class QuantStrategyPipeline:
             if pd.notna(ibov_row.get('density')) and pd.notna(density_threshold):
                 if ibov_row['density'] > density_threshold:
                     exposure_modifier *= 0.5
+
+            # ── Sinal VoV: reduz exposição quando volatilidade está sendo
+            # anormalmente volátil (acima do P80 histórico rolling 252d).
+            # Indica regime de transição ou fragilidade estrutural —
+            # mesmo limiar sem viés usado na density e na entropia.
+            vov_threshold = ibov_row.get('vov_rolling_80')
+            if pd.notna(ibov_row.get('vol_of_vol')) and pd.notna(vov_threshold):
+                if ibov_row['vol_of_vol'] > vov_threshold:
+                    exposure_modifier *= 0.5
+
+            eigen_threshold = ibov_row.get('eigen_rolling_80')
+            if pd.notna(ibov_row.get('max_eigen_value')) and pd.notna(eigen_threshold):
+                if ibov_row['max_eigen_value'] > eigen_threshold:
+                    exposure_modifier *= 0.8
+
 
             regime = ibov_row['hmm_state']
             buy_signals = []
