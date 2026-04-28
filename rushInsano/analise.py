@@ -67,7 +67,6 @@ CRISES = {
     "Greve dos\nCaminh.":   "2018-05-21",
     "Brumadinho":           "2019-01-25",
     "COVID-19":             "2020-03-23",
-    "Circuit\nBreaker":     "2020-03-18",
     "Invasão\nUcrânia":     "2022-02-24",
 }
 
@@ -178,14 +177,24 @@ THRESHOLD_ENTROPY = 0.6
 fig, ax = plt.subplots(figsize=(16, 5))
 fig.patch.set_facecolor("#F8F9FA")
 
-ent = ibov['hmm_entropy'].dropna()
+ent = ibov.loc[ibov.index >= split, 'hmm_entropy'].dropna()
+
+# --- Fundo colorido por regime (igual à Fig 5) ---
+ibov_oos = ibov.loc[ibov.index >= split]
+dates = ibov_oos.index
+for i in range(len(dates) - 1):
+    estado = ibov_oos['hmm_state'].iloc[i]   # ← iloc[i] agora correto
+    if pd.notna(estado):
+        ax.axvspan(dates[i], dates[i+1],
+                   color=cor_regime[int(estado)], alpha=0.18, linewidth=0)
+# -------------------------------------------------
 
 ax.fill_between(ent.index, ent.values, alpha=0.25, color="#2980B9")
-ax.plot(ent.index, ent.values, color="#2980B9", linewidth=1.0)
+ax.plot(ent.index, ent.values, color="#2980B9", linewidth=1.0, label="Entropia HMM")
 
 # Threshold de operação (Atualizado para a nova escala)
 ax.axhline(THRESHOLD_ENTROPY, color="#E74C3C", linestyle="--", linewidth=1.5,
-           label=f"Threshold (H > {THRESHOLD_ENTROPY} → exposição ÷ 2)")
+           label=f"Threshold (H > {THRESHOLD_ENTROPY})")
 
 # Entropia máxima teórica (Agora é 1.0 por conta da normalização prévia)
 ax.axhline(1.0, color="#95A5A6", linestyle=":", linewidth=1.0,
@@ -207,8 +216,14 @@ ax.set_ylim(0, 1.05)
 ax.set_title("Entropia de Shannon do HMM ao Longo do Tempo (Normalizada)")
 ax.set_xlabel("Data")
 ax.set_ylabel("Entropia H (0 a 1)")
-ax.legend(loc="upper right", framealpha=0.92)
 
+# --- Legendas dos regimes HMM (igual à Fig 5) ---
+patches = [mpatches.Patch(color=cor_regime[k], alpha=0.5, label=v)
+           for k, v in label_map.items()]
+handles, labels = ax.get_legend_handles_labels()
+ax.legend(handles=handles + patches, loc="upper right", framealpha=0.92, ncol=3)
+# -------------------------------------------------
+ax.set_xlim(split, ibov.index.max())
 plt.tight_layout()
 plt.savefig("fig2_entropia.png", dpi=180, bbox_inches='tight')
 plt.show()
