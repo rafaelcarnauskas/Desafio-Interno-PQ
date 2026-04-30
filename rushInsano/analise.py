@@ -65,7 +65,6 @@ CRISES = {
     "Dilma\nImpeach.":      "2016-04-17",
     "Joesley\nDay":         "2017-05-18",
     "Greve dos\nCaminh.":   "2018-05-21",
-    "Brumadinho":           "2019-01-25",
     "COVID-19":             "2020-03-23",
     "Invasão\nUcrânia":     "2022-02-24",
 }

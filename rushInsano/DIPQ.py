@@ -14,8 +14,8 @@ from scipy.special import comb
 # ║  PARÂMETROS                                                              ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
-STOP_LOSS_PCT            = 0.15   # drawdown máximo desde o pico-
-TRAILING_STOP_PCT        = 0.12   # recuo do equity desde o último pico 
+STOP_LOSS_PCT            = 0.1   # drawdown máximo desde o pico-
+TRAILING_STOP_PCT        = 0.15   # recuo do equity desde o último pico 
 THRESHOLD_net_analysis = 0.7      #filtro de correlação mínima para matriz de adjacencia
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -469,10 +469,10 @@ class QuantStrategyPipeline:
                             buy_signals.append(ticker)
 
                     elif regime == 1:
-                        if self.b3_rsi.loc[date, ticker] < 30:
+                        if self.b3_rsi.loc[date, ticker] < 25:
                             buy_signals.append(ticker)
                 else:
-                    if regime == 1 and self.b3_rsi.loc[date, ticker] > 70:
+                    if regime == 1 and self.b3_rsi.loc[date, ticker] > 65:
                         capital += pos['qty'] * price
                         positions[ticker] = {'qty': 0, 'entry_price': 0, 'highest_price': 0}
 
@@ -587,8 +587,18 @@ class QuantStrategyPipeline:
             vol_strat  = strat_ret.std() * np.sqrt(252) * 100
             vol_bench  = bench_ret.std() * np.sqrt(252) * 100
 
-            sharpe_strat = (strat_ret.mean() / strat_ret.std()) * np.sqrt(252) if strat_ret.std() != 0 else 0
-            sharpe_bench = (bench_ret.mean() / bench_ret.std()) * np.sqrt(252) if bench_ret.std() != 0 else 0
+            # CDI diário alinhado ao período — subtrai o Rf para Sharpe real
+            cdi_periodo = perf_df.loc[df_periodo.index, 'cdi_retorno'] \
+                          if 'cdi_retorno' in perf_df.columns \
+                          else pd.Series(0, index=df_periodo.index)
+
+            exc_strat = strat_ret - cdi_periodo
+            exc_bench = bench_ret - cdi_periodo
+
+            sharpe_strat = (exc_strat.mean() / exc_strat.std()) * np.sqrt(252) \
+                           if exc_strat.std() != 0 else 0
+            sharpe_bench = (exc_bench.mean() / exc_bench.std()) * np.sqrt(252) \
+                           if exc_bench.std() != 0 else 0
 
             dd_strat = (cum_strat / cum_strat.cummax() - 1).min() * 100
             dd_bench = (cum_bench / cum_bench.cummax() - 1).min() * 100
